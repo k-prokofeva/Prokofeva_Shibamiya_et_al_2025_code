@@ -1,0 +1,97 @@
+library(dplyr)
+
+# Frame rate of the video
+frame_rate <- 29.97
+
+# Convert frames to time in seconds from the beginning of the video
+df <- df %>%
+  mutate(time_sec = coords / frame_rate)
+
+# Define the x-axis line for pool crossings (middle of the water pool)
+x_line <- 1230
+
+# Define pool area to calculate time in the pool (central area of the water pool)
+x1 <- 1180
+y1 <- 0
+x2 <- 1280
+y2 <- 1080
+
+# Function for extracting pool crossings during 5 min habituation tests
+extract_first_cros_5 <- function(crossings, time_sec, start_time) {
+  if (nrow(crossings) > 0) {
+    return(crossings[[time_sec]][1] - start_time)  # Subtract start_time from the first row of the specific column
+  } else {
+    return(300)  # Return 300 if the data frame is empty
+  }
+}
+
+# Function for extracting pool crossings during 30 min rescue tests
+extract_first_cros_30 <- function(crossings, time_sec, start_time) {
+  if (nrow(crossings) > 0) {
+    return(crossings[[time_sec]][1] - start_time)  # Subtract start_time from the first row of the specific column
+  } else {
+    return(1800)  # Return 1800 if the data frame is empty
+  }
+}
+
+
+
+# Extract pool crossings from each test
+
+# Example: 0mm water depth, 5 min habituation test
+
+# Define the time interval for analysis (in seconds)
+start_time <- 4  
+end_time <- 304    
+
+# Filter data to include only the frames within the specified time interval
+data_filtered <- df %>%
+  filter(time_sec >= start_time & time_sec <= end_time)
+
+# Calculate the Euclidean distance between consecutive frames
+data_filtered <- data_filtered %>%
+  mutate(
+    dx = c(NA, diff(x)),
+    dy = c(NA, diff(y)),
+    distance = sqrt(dx^2 + dy^2)
+  )
+
+# Define a speed threshold for identifying inter-frame jumps due to DLC mismarking
+threshold <- 150.0
+
+# Identify frames with jumps (based on outliers)
+data_filtered <- data_filtered %>%
+  mutate(jump = ifelse(distance > threshold, TRUE, FALSE))
+
+# Identify crossings of the x-axis line
+crossings <- data_filtered %>%
+  mutate(crossed = ifelse(lag(x, default = first(x)) < x_line & x >= x_line |
+                            lag(x, default = first(x)) > x_line & x <= x_line, 1, 0)) %>%
+  filter(crossed == 1)
+
+# Filter out the crossings that are counted due to jumping
+crossings <- crossings %>%
+  filter(!jump)
+
+# Calculate the number of crossings
+num_crossings_lvl1_5 <- nrow(crossings)
+
+# Print the result
+print(paste("Number of crossings between", start_time, "and", end_time, "seconds:", num_crossings_lvl1_5))
+
+# Identify the latency to the first crossing
+first_cros_lvl1_5 <- extract_first_cros_5(crossings, "time_sec", start_time)
+print(first_cros_lvl1_5)
+
+# Identify frames where the animal is within the pool
+pool_area <- data_filtered %>%
+  filter(x >= x1 & x <= x2 & y >= y1 & y <= y2)
+
+# Calculate the number of frames within the area during the specified interval
+frames_pool_area <- nrow(pool_area)
+
+# Calculate time spent in the area (in seconds) during the specified interval
+time_spent_in_pool_lvl1_5 <- frames_pool_area / frame_rate
+
+# Print the result
+print(paste("Time spent in the area between", start_time, "and", end_time, "seconds:", time_spent_in_pool_lvl1_5, "seconds"))

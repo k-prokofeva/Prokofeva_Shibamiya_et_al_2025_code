@@ -1,0 +1,93 @@
+library(tidyverse)
+library(corrr)
+library(ggplot2)
+library(reshape2)
+library(ggdendro)
+library(dendextend)
+library(cowplot)
+library(ggpubr)
+
+# Select behavioral data
+behavior_cols <- c("E1", "Sm1", "Sm2", "Bm1", "Bm2", "Tm1", "Tm2", "Tml1", "Tml2", "X1", "X2", 
+                   "R1", "R2")
+brain_cols <- setdiff(names(data), c("mouse.ID", "group", "side", behavior_cols))
+
+behavior_data <- data[, behavior_cols, drop = FALSE]
+brain_data <- data[, brain_cols, drop = FALSE]
+
+cor_results <- data.frame()
+
+for (i in behavior_cols) {
+  for (j in brain_cols) {
+    if (sum(!is.na(data[[i]])) > 1 && sum(!is.na(data[[j]])) > 1) {  # NAが多すぎる場合を回避
+      temp <- cor.test(data[[i]], data[[j]], use = "pairwise.complete.obs", method = "spearman")
+      cor_results <- rbind(cor_results, data.frame(Behavior = i, Brain_Region = j, 
+                                                   Correlation = temp$estimate, 
+                                                   P_Value = temp$p.value))
+    }
+  }
+}
+
+# Adjust p-values using Benjamini-Hochberg FDR
+cor_results$P_Value_Adj <- p.adjust(cor_results$P_Value, method = "fdr")
+
+
+# Set p-value category (unadjusted)
+cor_results$Significance <- cut(cor_results$P_Value_Adj, 
+                                breaks = c(-Inf, 0.001, 0.01, 0.05, Inf),
+                                labels = c("***", "**", "*", ""))
+
+cor_results %>%
+  arrange(P_Value) %>%
+  head(10)  # Top 10 strongest correlations after correction
+
+
+cor_results %>%
+  arrange(P_Value_Adj) %>%
+  head(10)  # Top 10 strongest correlations after correction
+
+
+# Creating a dendrogram (behavior)
+behavior_dist <- dist(t(behavior_data), method = "euclidean")
+behavior_hc <- hclust(behavior_dist, method = "ward.D2")
+behavior_dend <- as.dendrogram(behavior_hc)
+
+desired_behavior_order <- c("Tm2", "Bm2", "R2", "X2", "Tml2", "R1", "X1", 
+                            "Tml1", "Tm1", "Bm1", "Sm2", "Sm1", "E1")
+
+behavior_dend <- rotate(behavior_dend, desired_behavior_order)
+
+behavior_hc <- as.hclust(behavior_dend)
+
+# Creating a dendrogram (brain regions)
+brain_dist <- dist(t(brain_data), method = "euclidean")
+brain_hc <- hclust(brain_dist, method = "ward.D2")
+brain_dend <- as.dendrogram(brain_hc)
+
+# Order the heatmap based on the dendrogram results
+cor_results$Behavior <- factor(cor_results$Behavior, levels = desired_behavior_order)
+cor_results$Brain_Region <- factor(cor_results$Brain_Region, levels = labels(brain_dend))
+
+# ヒートマップ用データ
+heatmap_data <- dcast(cor_results, Behavior ~ Brain_Region, value.var = "Correlation")
+rownames(heatmap_data) <- heatmap_data$Behavior
+heatmap_data <- heatmap_data[, -1]
+
+# Heatmap
+heatmap_plot <- ggplot(cor_results, aes(x = Brain_Region, y = Behavior, fill = Correlation)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Significance), size = 2) +
+  scale_fill_gradient2(
+    low = "blue",
+    high = "red",
+    mid = "white",
+    midpoint = 0,
+    limit = c(-1, 1),
+    na.value = "grey80"  # <–– add it here
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+# Integrating dendrograms and heatmaps
+plot_grid(ggdendrogram(behavior_hc), ggdendrogram(brain_hc), heatmap_plot, nrow = 2, ncol = 2)
